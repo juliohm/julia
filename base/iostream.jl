@@ -200,14 +200,14 @@ function takebuf_raw(s::IOStream)
     return buf, sz
 end
 
-function sprint(size::Integer, f::Function, args...)
+function sprint(size::Integer, f, args...)
     s = IOBuffer(Array(UInt8,size), true, true)
     truncate(s,0)
     f(s, args...)
     takebuf_string(s)
 end
 
-sprint(f::Function, args...) = sprint(0, f, args...)
+sprint(f, args...) = sprint(0, f, args...)
 
 write(x) = write(STDOUT::IO, x)
 

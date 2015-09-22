@@ -76,6 +76,7 @@ function finalizer(o::ANY, f::Union{Function,Ptr})
     end
     ccall(:jl_gc_add_finalizer, Void, (Any,Any), o, f)
 end
+finalizer(o::ANY, f::ANY) = finalizer(o, eval(:(o->($f)(o))))
 
 finalize(o::ANY) = ccall(:jl_finalize, Void, (Any,), o)
 

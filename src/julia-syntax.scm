@@ -437,6 +437,11 @@
           ((eq? (car lhs) 'kw) (cadr lhs))
           (else                lhs))))
 
+(define (unwrap-getfield-expr e)
+  (if (and (length= e 4) (eq? (car e) 'call) (equal? (cadr e) '(top getfield)))
+      (cadr (last e))
+      e))
+
 (define (method-expr-static-parameters m)
   (if (eq? (car (cadr (caddr m))) 'lambda)
       (cadr (cadr (caddr m)))
@@ -469,7 +474,9 @@
            (error "function static parameter names not unique"))
        (if (any (lambda (x) (memq x names)) anames)
            (error "function argument and static parameter names must be distinct")))
-     (if (not (or (sym-ref? name)
+     ;; TODO: this is currently broken by the code in closure-convert that
+     ;; puts a lowered method name expression back into a front-end AST
+     #;(if (not (or (sym-ref? name)
                   (and (pair? name) (eq? (car name) 'kw)
                        (sym-ref? (cadr name)))))
          (error (string "invalid method name \"" (deparse name) "\"")))
@@ -2961,7 +2968,7 @@ So far only the second case can actually occur.
 
 (define (caddddr x) (car (cdr (cdr (cdr (cdr x))))))
 ; convert each lambda's (locals ...) to
-;   ((localvars...) var-info-lst captured-var-infos)
+;   (var-info-lst captured-var-infos gensyms static_params)
 ; where var-info-lst is a list of var-info records
 (define (analyze-vars e env captvars sp)
   (if (or (atom? e) (quoted? e))
@@ -3082,10 +3089,245 @@ So far only the second case can actually occur.
 
 (define (analyze-variables e) (analyze-vars e '() '() '()))
 
+(define (clear-capture-bits vinfos)
+  (map (lambda (vi) (list (car vi) (cadr vi) (logand (caddr vi) (lognot 5))))
+       vinfos))
+
+(define (convert-lambda lam fname tname)
+  `(lambda ,(cons fname (lam:args lam))
+     (,(cons `(,fname Any 0)
+	     (clear-capture-bits (car (lam:vinfo lam))))
+      ()
+      ,(caddr (lam:vinfo lam))
+      ,(cadddr (lam:vinfo lam)))
+     ,(closure-convert (cadddr lam) fname lam)))
+
+(define (cl-convert e) (closure-convert e #f #f))
+
+(define (internal-toplevel-exprs e)
+  (filter (lambda (x) (and (not (and (pair? x) (eq? (car x) 'return)))
+			   (not (equal? x '(null)))))
+	  (cdr (flatten-blocks `(block ,e)))))
+
+(define (convert-assignment var rhs fname lam)
+  (let ((vi (assq var (car  (lam:vinfo lam))))
+	(cv (assq var (cadr (lam:vinfo lam)))))
+    (cond
+     ((and cv (vinfo:asgn cv))
+      `(call (top setfield!) (call (top getfield) ,fname (inert ,var))
+	     (inert contents)
+	     ,rhs))
+     ((and vi (vinfo:asgn vi) (vinfo:capt vi))
+      `(call (top setfield!) ,var (inert contents) ,rhs))
+     (else
+      `(= ,var ,rhs)))))
+
+(define (arg-type-lowered a)
+  (let ((t (arg-type a)))
+    (if (vararg? t)
+	`(call (top apply_type) Vararg ,(cadr t))
+	t)))
+
+#|
+Function redesign plan
+
+This can be done with a few intermediate stages.
+
+1. Introduce the following hacked-together closure converter to lift all
+inner functions to the top level as type and `call` definitions.
+
+2. Remove the front end's dependence on intermediate lambdas. Instead,
+all temp vars can be locals of a top level thunk, which is just a
+LambdaStaticData that can be called directly (the jl_function_t wrapper
+we used to put around it is superfluous in this case).
+
+3. Decide how to handle method defs wrapped in `let`. Possibly just make
+a closure like normal, then do
+
+@eval f(x...) = ($(ClosureType(a, b, c)))(x...)
+
+4. Now jl_function_t can be removed, along with the old implementation of
+closure conversion which is mostly in codegen.cpp. The captured vars
+field in ASTs can be removed.
+
+5. At this stage the call ABI for f(x) can effectively be
+
+if isa(f,MethodTable)
+  jl_apply_generic(f, {x}, 1)
+else
+  call(f, x)
+end
+
+5.1. Maybe introduce Function abstract type.
+
+6. Move MethodTable into TypeName. Lower f(x)=2x to
+
+immutable _ftype; end
+call(::_ftype, x) = 2x
+const f = _ftype()
+
+Definitions of `call` now need to be intercepted to modify the MethodTable
+of the TypeName of the first argument.
+
+The ABI for f(x) is now
+
+jl_call({f, x}, 2)
+
+where jl_apply_generic has been renamed jl_call.
+
+7. Figure out how to pass in static parameters in --compile=no mode.
+
+8. propagate static parameters into closure types, so e.g. closure method
+signatures can depend on them.
+
+|#
+(define (closure-convert e fname lam)
+  (if (and (not lam)
+	   (not (and (pair? e) (memq (car e) '(lambda method macro)))))
+      (if (atom? e) e
+	  (cons (car e) (map (lambda (x) (closure-convert x fname lam))
+			     (cdr e))))
+      (cond
+       ((symbol? e)
+	(let ((vi (assq e (car  (lam:vinfo lam))))
+	      (cv (assq e (cadr (lam:vinfo lam)))))
+	  (cond ((eq? e fname) e)
+		(cv
+		 (let ((access `(call (top getfield) ,fname (inert ,e))))
+		   (if (vinfo:asgn cv)
+		       `(call (top getfield) ,access (inert contents))
+		       access)))
+		(vi
+		 (if (and (vinfo:asgn vi) (vinfo:capt vi))
+		     `(call (top getfield) ,e (inert contents))
+		     e))
+		(else e))))
+       ((atom? e) e)
+       (else
+	(case (car e)
+	  ((quote inert) e)
+	  ((=)
+	   (let ((var (cadr e))
+		 (rhs (closure-convert (caddr e) fname lam)))
+	     (convert-assignment var rhs fname lam)))
+	  ((newvar)
+	   (let ((vi (assq (cadr e) (car (lam:vinfo lam)))))
+	     (if (and vi (vinfo:asgn vi) (vinfo:capt vi))
+		 `(= ,(cadr e) (call (top Box)))
+		 e)))
+	  ((const)
+	   (if (or (assq (cadr e) (car  (lam:vinfo lam)))
+		   (assq (cadr e) (cadr (lam:vinfo lam))))
+	       '(null)
+	       e))
+	  #;((call)
+	   (let ((f (cadr e)))
+	     (if (and (pair? f) (eq? (car f) 'lambda)
+		      (null? (cadr f))
+		      (length= (cadddr f) 2))
+		 (cadr (cadr (cadddr f)))
+		 (cons (car e)
+		       (map (lambda (x) (closure-convert x fname lam))
+			    (cdr e))))))
+	  ((macro) e)
+	  ((method)
+	   (if (length= e 2)
+	       e ;; function f end
+	       (let* ((name (unwrap-getfield-expr (method-expr-name e)))
+		      ;; TODO: force global mode if method-expr-name returns a getfield expr
+		      (lam2 (cadddr e))
+		      (tname (named-gensy name))
+		      (vis  (lam:vinfo lam2))
+		      (cvs  (cadr (lam:vinfo lam2))))
+		 (if (and (null? cvs) (or (not lam) (eq? name 'call)))
+		     `(method ,(cadr e) ,(caddr e)
+			      (lambda ,(cadr lam2)
+				(,(clear-capture-bits (car vis))
+				 ,@(cdr vis))
+				,(closure-convert (cadddr lam2) 'anon
+						  (if (any vinfo:capt (car vis))
+						      lam2 #f)))
+			      ,(last e))
+		     `(toplevel-butlast
+		       ,@(internal-toplevel-exprs
+			  (julia-expand-for-cl-convert
+			   `(type #f ,tname
+				  (block ,@(map car cvs)))))
+		       (method call
+			       (call (top svec)
+				     (call (top apply_type) Tuple ,tname ,@(cdddr (caddr (caddr e))))
+				     ,(cadddr (caddr e)))
+			       ,(convert-lambda lam2 name tname)
+			       ,(last e))
+		       ,(let ((the-closure `(call ,tname ,@(map car cvs))))
+			  (if (and lam (or (assq name (car  (lam:vinfo lam)))
+					   (assq name (cadr (lam:vinfo lam)))))
+			      (convert-assignment name the-closure fname lam)
+			      ;; otherwise, adding method with free variables to a global function.
+			      ;; lowered to @eval f(x, y...) = ($(clo(fv)))(x, y...)
+			      `(call
+				(top eval)
+				,(current-julia-module)
+				,(cadr
+				  (julia-expand-for-cl-convert
+				   `(quote
+				     (= (call ,name ,@(map (lambda (arg type)
+							     (if (symbol? arg)
+								 `(|::| ,arg ,type)
+								 arg))
+							   (cadr lam2)
+							   (cdddr (caddr (caddr e)))))
+					(call ($ ,the-closure)
+					      ,@(map (lambda (arg) (if (symbol? arg)
+								       arg
+								       (list '... arg)))
+						     (cadr lam2)))))))))))))))
+	  ((lambda)
+	   (let ((name (gensy))
+		 (tname (named-gensy 'anon))
+		 (vis  (lam:vinfo e))
+		 (cvs  (cadr (lam:vinfo e))))
+	     (if (and (null? cvs) #;(null? (cadr e)) (not lam))
+		 `(lambda ,(cadr e)
+		    (,(clear-capture-bits (car vis))
+		     ,@(cdr vis))
+		    ,(closure-convert (cadddr e) 'anon
+				      (if (any vinfo:capt (car vis))
+					  e #f)))
+		 `(toplevel-butlast
+		   ,@(internal-toplevel-exprs
+		      (julia-expand-for-cl-convert
+		       `(type #f ,tname
+			      (block ,@(map car cvs)))))
+		   (method call
+			   (call (top svec)
+				 (call (top apply_type) Tuple ,tname ,@(map arg-type-lowered (cadr e)))
+				 (call (top svec)))
+			   ,(convert-lambda e name tname)
+			   #f)
+		   (call ,tname ,@(map car cvs))))))
+	  ((body)
+	   ;; insert Box allocations for captured/assigned arguments
+	   (let ((args (if lam (map arg-name (lam:args lam))
+			   '())))
+	     `(body
+	       ,@(apply append
+			(map (lambda (arg)
+			       (let ((vi (assq arg (car (lam:vinfo lam)))))
+				 (if (and vi (vinfo:asgn vi) (vinfo:capt vi))
+				     `((= ,arg (call (top Box) ,arg)))
+				     '())))
+			     args))
+	       ,@(map (lambda (x) (closure-convert x fname lam))
+		      (cdr e)))))
+	  (else (cons (car e)
+		      (map (lambda (x) (closure-convert x fname lam))
+			   (cdr e)))))))))
+
 (define (not-bool e)
   (cond ((memq e '(true #t))  'false)
-        ((memq e '(false #f)) 'true)
-        (else                 `(call (top !) ,e))))
+	((memq e '(false #f)) 'true)
+	(else                 `(call (top !) ,e))))
 
 ;; remove if, _while, block, break-block, and break
 ;; replaced with goto and gotoifnot
@@ -3574,12 +3816,21 @@ So far only the second case can actually occur.
 
 ;; expander entry point
 
-(define (julia-expand1 ex)
+(define (julia-expand-for-cl-convert ex)
   (to-goto-form
+   (analyze-variables
+    (renumber-jlgensym
+     (flatten-scopes
+      (identify-locals
+       (julia-expand0 ex)))))))
+
+(define (julia-expand1 ex)
+  (cl-convert
+   (to-goto-form
     (analyze-variables
      (renumber-jlgensym
       (flatten-scopes
-       (identify-locals ex))))))
+       (identify-locals ex)))))))
 
 (define (julia-expand01 ex)
   (to-LFF

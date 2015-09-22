@@ -117,10 +117,10 @@ const n_ifunc = reinterpret(Int32,arraylen)+1
 const t_ifunc = Array{Tuple{Int,Int,Function},1}(n_ifunc)
 const t_ffunc_key = Array{Function,1}(0)
 const t_ffunc_val = Array{Tuple{Int,Int,Function},1}(0)
-function add_tfunc(f::IntrinsicFunction, minarg::Int, maxarg::Int, tfunc::Function)
+function add_tfunc(f::IntrinsicFunction, minarg::Int, maxarg::Int, tfunc::ANY)
     t_ifunc[reinterpret(Int32,f)+1] = (minarg, maxarg, tfunc)
 end
-function add_tfunc(f::Function, minarg::Int, maxarg::Int, tfunc::Function)
+function add_tfunc(f::Function, minarg::Int, maxarg::Int, tfunc::ANY)
     push!(t_ffunc_key, f)
     push!(t_ffunc_val, (minarg, maxarg, tfunc))
 end

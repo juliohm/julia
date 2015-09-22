@@ -317,7 +317,7 @@ end
 # Edit functionality
 is_non_word_char(c) = c in " \t\n\"\\'`@\$><=:;|&{}()[].,+-*/?%^~"
 
-function reset_key_repeats(f::Function, s::MIState)
+function reset_key_repeats(f, s::MIState)
     key_repeats_sav = s.key_repeats
     try
         s.key_repeats = 0
@@ -747,7 +747,7 @@ immutable KeyAlias
     KeyAlias(seq) = new(normalize_key(seq))
 end
 
-match_input(k::Function, s, term, cs, keymap) = (update_key_repeats(s, cs); return keymap_fcn(k, s, ByteString(cs)))
+match_input(k, s, term, cs, keymap) = (update_key_repeats(s, cs); return keymap_fcn(k, s, ByteString(cs)))
 match_input(k::Void, s, term, cs, keymap) = (s,p) -> return :ok
 match_input(k::KeyAlias, s, term, cs, keymap) = match_input(keymap, s, IOBuffer(k.seq), Char[], keymap)
 function match_input(k::Dict, s, term=terminal(s), cs=Char[], keymap = k)
@@ -762,7 +762,7 @@ function match_input(k::Dict, s, term=terminal(s), cs=Char[], keymap = k)
 end
 
 keymap_fcn(f::Void, s, c) = (s, p) -> return :ok
-function keymap_fcn(f::Function, s, c)
+function keymap_fcn(f, s, c)
     return (s, p) -> begin
         r = f(s, p, c)
         if isa(r, Symbol)
@@ -1102,7 +1102,7 @@ function reset_state(s::PrefixSearchState)
     end
 end
 
-function transition(f::Function, s::PrefixSearchState, mode)
+function transition(f, s::PrefixSearchState, mode)
     if isdefined(s,:mi)
         transition(f,s.mi,mode)
     end
@@ -1532,7 +1532,7 @@ activate(m::ModalInterface, s::MIState, termbuf, term::TextTerminal) =
     activate(s.current_mode, s, termbuf, term)
 
 commit_changes(t::UnixTerminal, termbuf) = write(t, takebuf_array(termbuf.out_stream))
-function transition(f::Function, s::MIState, mode)
+function transition(f, s::MIState, mode)
     if mode == :abort
         s.aborted = true
         return
