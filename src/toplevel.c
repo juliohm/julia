@@ -407,6 +407,7 @@ int jl_is_toplevel_only_expr(jl_value_t *e)
          ((jl_expr_t*)e)->head == import_sym ||
          ((jl_expr_t*)e)->head == using_sym ||
          ((jl_expr_t*)e)->head == export_sym ||
+         ((jl_expr_t*)e)->head == thunk_sym ||
          ((jl_expr_t*)e)->head == toplevel_sym);
 }
 
@@ -510,7 +511,10 @@ jl_value_t *jl_toplevel_eval_flex(jl_value_t *e, int fast)
     if (head == thunk_sym) {
         thk = (jl_lambda_info_t*)jl_exprarg(ex,0);
         assert(jl_is_lambda_info(thk));
-        assert(jl_is_expr(thk->ast));
+        if (!jl_is_expr(thk->ast)) {
+            thk->ast = jl_uncompress_ast(thk, thk->ast);
+            jl_gc_wb(thk, thk->ast);
+        }
         ewc = jl_eval_with_compiler_p((jl_expr_t*)thk->ast, jl_lam_body((jl_expr_t*)thk->ast), fast, jl_current_module) ||
             // interpreter doesn't handle closure environment
             jl_lam_vars_captured((jl_expr_t*)thk->ast);

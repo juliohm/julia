@@ -93,8 +93,12 @@ value_t fl_invoke_julia_macro(value_t *args, uint32_t nargs)
     value_t scm = julia_to_scm(result);
     fl_gc_handle(&scm);
     value_t scmresult;
-    jl_module_t *defmod = f->linfo->module;
-    if (defmod == jl_current_module) {
+    jl_module_t *defmod;
+    if (jl_is_gf(f))
+        defmod = jl_gf_mtable(f)->module;
+    else
+        defmod = f->linfo->module;
+    if (defmod == NULL || defmod == jl_current_module) {
         scmresult = fl_cons(scm, FL_F);
     }
     else {
@@ -477,6 +481,13 @@ static value_t julia_to_scm_(jl_value_t *v)
         fl_gc_handle(&args);
         array_to_list(ex->args, &args);
         value_t hd = julia_to_scm_((jl_value_t*)ex->head);
+        if (ex->head == lambda_sym && jl_expr_nargs(ex)>0 && jl_is_array(jl_exprarg(ex,0))) {
+            value_t llist = FL_NIL;
+            fl_gc_handle(&llist);
+            array_to_list((jl_array_t*)jl_exprarg(ex,0), &llist);
+            car_(args) = llist;
+            fl_free_gc_handles(1);
+        }
         value_t scmv = fl_cons(hd, args);
         fl_free_gc_handles(1);
         return scmv;

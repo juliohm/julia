@@ -61,9 +61,9 @@ lastdayofquarter(dt::DateTime) = DateTime(lastdayofquarter(Date(dt)))
 
 # Temporal Adjusters
 immutable DateFunction
-    f::Function
+    f
     # validate boolean, single-arg inner constructor
-    function DateFunction(f::Function,negate::Bool,dt::TimeType)
+    function DateFunction(f::ANY,negate::Bool,dt::TimeType)
         try
             f(dt) in (true,false) || throw(ArgumentError("Provided function must take a single TimeType argument and return true or false"))
         catch e

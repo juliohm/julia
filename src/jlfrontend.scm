@@ -1,6 +1,8 @@
 (load "./flisp/aliases.scm")
 (load "utils.scm")
+(load "ast.scm")
 (load "match.scm")
+(load "macroexpand.scm")
 (load "julia-parser.scm")
 (load "julia-syntax.scm")
 
@@ -36,7 +38,7 @@
                                       (put! tab n #t)
                                       tab)))
                 ((lambda)       tab)
-                ((local local!) tab)
+                ((local)        tab)
                 ((break-block)  (find-possible-globals- (caddr e) tab))
 		((module)       '())
                 (else
@@ -65,9 +67,7 @@
      (find-decls 'global e)
      ;; vars assigned anywhere, if they have been defined as global
      (filter defined-julia-global (find-possible-globals e))))
-   (append
-    (find-decls 'local e)
-    (find-decls 'local! e))))
+   (find-decls 'local e)))
 
 ;; return a lambda expression representing a thunk for a top-level expression
 ;; note: expansion of stuff inside module is delayed, so the contents obey
@@ -92,7 +92,8 @@
                               (scope-block
                                (block ,@(map (lambda (v) `(implicit-global ,v)) gv)
                                       ,ex))))))
-                 (if (null? (car (caddr th)))
+                 (if (and (null? (car (caddr th)))
+			  (= 0 (caddr (caddr th))))
                      ;; if no locals, return just body of function
                      (cadddr th)
                      `(thunk ,th))))))))
@@ -103,33 +104,8 @@
        (pair? (cadr e)) (eq? (caadr e) '=) (symbol? (cadadr e))
        (eq? (cadr (caddr e)) (cadadr e))))
 
-(define (lift-toplevel- e)
-  (if (atom? e) (cons e '())
-      (let* ((rec (map lift-toplevel- e))
-	     (e2  (map car rec))
-	     (tl  (apply append (map cdr rec))))
-	(if (eq? (car e) 'toplevel-butlast)
-	    (cons (last e2) (append tl (butlast (cdr e2))))
-	    (cons e2 tl)))))
-
-(define (lift-toplevel x)
-  (if (and (pair? x) (memq (car x) '(toplevel body)))
-      (cons (car x)
-            (apply append (map (lambda (e)
-                                 (let ((e (lift-toplevel e)))
-                                   (if (and (pair? e) (eq? (car e) 'toplevel))
-                                       (cdr e)
-                                       (list e))))
-                               (cdr x))))
-      (let ((e (lift-toplevel- x)))
-        (if (null? (cdr e))
-            (car e)
-            (if (and (pair? (car e)) (eq? (caar e) 'toplevel))
-                `(toplevel ,@(cdr e) ,@(cdar e))
-                `(toplevel ,@(cdr e) ,(car e)))))))
-
 (define (expand-toplevel-expr- e)
-  (let ((ex (lift-toplevel (expand-toplevel-expr-- e))))
+  (let ((ex (expand-toplevel-expr-- e)))
     (cond ((contains (lambda (x) (equal? x '(top ccall))) ex) ex)
           ((simple-assignment? ex)  (cadr ex))
           ((and (length= ex 2) (eq? (car ex) 'body))

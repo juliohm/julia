@@ -357,9 +357,8 @@ static void schedule_finalization(void *o, void *f)
 static void run_finalizer(jl_value_t *o, jl_value_t *ff)
 {
     jl_function_t *f = (jl_function_t*)ff;
-    assert(jl_is_function(f));
     JL_TRY {
-        jl_apply(f, (jl_value_t**)&o, 1);
+        jl_do_call(f, (jl_value_t**)&o, 1);
     }
     JL_CATCH {
         jl_printf(JL_STDERR, "error in running finalizer: ");

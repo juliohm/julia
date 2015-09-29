@@ -936,24 +936,12 @@ DLLEXPORT jl_function_t *jl_instantiate_staged(jl_methlist_t *m, jl_tupletype_t 
     else
         oldast = (jl_expr_t*)jl_uncompress_ast(m->func->linfo, m->func->linfo->ast);
     assert(oldast->head == lambda_sym);
-    ex = jl_exprn(arrow_sym, 2);
+    ex = jl_exprn(lambda_sym, 2);
     jl_array_t *oldargnames = jl_lam_args(oldast);
-    jl_expr_t *argnames = jl_exprn(tuple_sym, jl_array_len(oldargnames));
+    jl_array_t *argnames = jl_alloc_cell_1d(jl_array_len(oldargnames));
     jl_cellset(ex->args, 0, argnames);
     for (size_t i = 0; i < jl_array_len(oldargnames); ++i) {
-        jl_value_t *arg = jl_cellref(oldargnames,i);
-        if (jl_is_expr(arg)) {
-            assert(((jl_expr_t*)arg)->head == colons_sym);
-            arg = jl_cellref(((jl_expr_t*)arg)->args,0);
-            assert(jl_is_symbol(arg));
-            jl_expr_t *dd_expr = jl_exprn(dots_sym,1);
-            jl_cellset(dd_expr->args,0,arg);
-            jl_cellset(argnames->args,i,dd_expr);
-        }
-        else {
-            assert(jl_is_symbol(arg));
-            jl_cellset(argnames->args,i,arg);
-        }
+        jl_cellset(argnames, i, jl_cellref(oldargnames,i));
     }
     func = with_appended_env(m->func, env); // fulfills the expectations of the all_p2c pass
     jl_expr_t *body = jl_exprn(jl_symbol("block"), 2);
@@ -966,6 +954,8 @@ DLLEXPORT jl_function_t *jl_instantiate_staged(jl_methlist_t *m, jl_tupletype_t 
     jl_cellset(body->args, 0, linenode);
     jl_cellset(body->args, 1, // can call jl_apply here because this isn't a normal gf and has had all_p2c called on the ast earlier
             jl_apply(func, jl_svec_data(tt->parameters), jl_nparams(tt)));
+    jl_cellset(ex->args, 1, jl_exprn(jl_symbol("scope-block"), 1));
+    jl_cellset(((jl_expr_t*)jl_exprarg(ex,1))->args, 0, body);
     if (m->tvars != jl_emptysvec) {
         // mark this function as having the same static parameters as the generator
         size_t nsp = jl_is_typevar(m->tvars) ? 1 : jl_svec_len(m->tvars);

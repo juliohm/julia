@@ -3867,7 +3867,8 @@ static jl_cgval_t emit_expr(jl_value_t *expr, jl_codectx_t *ctx, bool isboxed, b
         if (!strcmp(jl_symbol_name(head), "$"))
             jl_error("syntax: prefix \"$\" in non-quoted expression");
         if (jl_is_toplevel_only_expr(expr) &&
-            ctx->linfo->name == anonymous_sym && ctx->vars.empty() &&
+            ctx->linfo->name == anonymous_sym &&
+            (ctx->vars.empty() || ((jl_expr_t*)expr)->head == thunk_sym) &&
             ctx->linfo->module == jl_current_module) {
             // call interpreter to run a toplevel expr from inside a
             // compiled toplevel thunk.

@@ -500,6 +500,9 @@ static jl_value_t *eval(jl_value_t *e, jl_value_t **locals, size_t nl, size_t ng
     else if (ex->head == inert_sym) {
         return args[0];
     }
+    else if (ex->head == thunk_sym) {
+        return jl_toplevel_eval((jl_value_t*)ex);
+    }
     jl_errorf("unsupported or misplaced expression %s", jl_symbol_name(ex->head));
     return (jl_value_t*)jl_nothing;
 }
