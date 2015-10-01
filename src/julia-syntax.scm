@@ -2781,6 +2781,9 @@ a __hidden__ submodule
 
 13. Figure out closure serialization.
 
+14. Staged functions containing closures are probably not lowered correctly
+    (jl_instantiate_staged).
+
 |#
 
 (define (clear-capture-bits vinfos)
@@ -2874,7 +2877,7 @@ a __hidden__ submodule
 		 (stmts '()))
 	(if (null? exprs)
 	    (reverse! stmts)
-	    (let* ((x (lift-toplevel (cl-convert (car exprs) fname lam namemap #t))))
+	    (let* ((x (lift-toplevel (cl-convert (car exprs) fname lam namemap #f))))
 	      (loop (cdr exprs)
 		    (cons (car x) (revappend (cdr x) stmts))))))
       (map (lambda (x) (cl-convert x fname lam namemap #f)) exprs)))
@@ -2922,7 +2925,17 @@ a __hidden__ submodule
 		   (assq (cadr e) (cadr (lam:vinfo lam))))
 	       '(null)
 	       e))
-	  ((macro) e)
+          ((macro)
+           (if (atom? (caddr e))
+               e
+               (let ((lam2 (caddr e)))
+                 `(macro ,(cadr e)
+                    (lambda ,(cadr lam2)
+                      (,(clear-capture-bits (car (lam:vinfo lam2)))
+                       ,@(cdr (lam:vinfo lam2)))
+                      ,(add-box-inits-to-body
+                        lam2
+                        (cl-convert (cadddr lam2) 'anon lam2 (table) #f)))))))
 	  ((method)
 	   (if (length= e 2)
 	       e ;; function f end
