@@ -1671,6 +1671,9 @@ static int push_root(jl_value_t *v, int d, int bits)
     if ((jl_is_datatype(vt) && ((jl_datatype_t*)vt)->pointerfree)) {
         int sz = jl_datatype_size(vt);
         bits = gc_setmark(v, sz, GC_MARKED_NOESC);
+        // TODO jb/functions -- this is needed for now since we create new types referenced
+        // only by their single (function/closure) instances.
+        gc_push_root(vt, d);
         goto ret;
     }
 #define MARK(v, s) do {                         \
@@ -1790,6 +1793,11 @@ static int push_root(jl_value_t *v, int d, int bits)
             dtsz = jl_datatype_size(dt);
         }
         MARK(v, bits = gc_setmark(v, dtsz, GC_MARKED_NOESC));
+
+        // TODO jb/functions -- this is needed for now since we create new types referenced
+        // only by their single (function/closure) instances.
+        gc_push_root(vt, d);
+
         int nf = (int)jl_datatype_nfields(dt);
         // TODO check if there is a perf improvement for objects with a lot of fields
         // int fdsz = sizeof(void*)*nf;
@@ -1910,8 +1918,7 @@ static void pre_mark(void)
     }
 
     jl_mark_box_caches();
-    gc_push_root(jl_unprotect_stack_func, 0);
-    gc_push_root(jl_bottom_func, 0);
+    //gc_push_root(jl_unprotect_stack_func, 0);
     gc_push_root(jl_typetype_type, 0);
 
     // constants

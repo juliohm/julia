@@ -304,10 +304,8 @@ function type_close_enough(x::ANY, t::ANY)
 end
 
 function methodswith(t::Type, f::Function, showparents::Bool=false, meths = Method[])
-    if !isa(f.env, MethodTable)
-        return meths
-    end
-    d = f.env.defs
+    mt = typeof(f).name.mt
+    d = mt.defs
     while d !== nothing
         if any(x -> (type_close_enough(x, t) ||
                      (showparents ? (t <: x && (!isa(x,TypeVar) || x.ub != Any)) :

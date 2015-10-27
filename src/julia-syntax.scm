@@ -230,7 +230,7 @@
                              (if (pair? (caddr x))
                                  x
                                  `(|::| ,(arg-name x) (curly Vararg Any)))
-                         (arg-name x))))
+                             (arg-name x))))
                    argl)))
     `(lambda ,argl
        (scope-block ,body))))
@@ -264,11 +264,7 @@
         (else
          (error "malformed type parameter list"))))
 
-(define (method-expr-name m)
-  (let ((lhs (cadr m)))
-    (cond ((symbol? lhs)       lhs)
-          ((eq? (car lhs) 'kw) (cadr lhs))
-          (else                lhs))))
+(define (method-expr-name m) (cadr m))
 
 (define (unwrap-getfield-expr e)
   (if (and (length= e 4) (eq? (car e) 'call) (equal? (cadr e) '(top getfield)))
@@ -311,25 +307,29 @@
            (error "function argument and static parameter names must be distinct")))
      ;; TODO: this is currently broken by the code in closure-convert that
      ;; puts a lowered method name expression back into a front-end AST
-     #;(if (not (or (sym-ref? name)
-                  (and (pair? name) (eq? (car name) 'kw)
-                       (sym-ref? (cadr name)))))
+     #;(if (not (sym-ref? name))
          (error (string "invalid method name \"" (deparse name) "\"")))
      (let* ((types (llist-types argl))
-            (body  (method-lambda-expr argl body)))
-       (if (null? sparams)
-           `(method ,name (call (top svec) (curly Tuple ,@(dots->vararg types)) (call (top svec)))
-		    ,body ,isstaged)
-	   (let* ((gss (map (lambda (x) (make-jlgensym)) names))
-		  (renames (map cons names gss)))
-	     `(method ,name
-		      (block
-		       ,@(map make-assignment gss (symbols->typevars names bounds #t))
-		       (call (top svec) (curly Tuple ,@(dots->vararg
-							(map (lambda (x) (rename-vars x renames))
-							     types)))
-			     (call (top svec) ,@gss)))
-		      ,body ,isstaged)))))))
+            (body  (method-lambda-expr argl body))
+            (mdef
+             (if (null? sparams)
+                 `(method ,name (call (top svec) (curly Tuple ,@(dots->vararg types)) (call (top svec)))
+                          ,body ,isstaged)
+                 (let* ((gss (map (lambda (x) (make-jlgensym)) names))
+                        (renames (map cons names gss)))
+                   `(method ,name
+                            (block
+                             ,@(map make-assignment gss (symbols->typevars names bounds #t))
+                             (call (top svec) (curly Tuple ,@(dots->vararg
+                                                              (map (lambda (x) (rename-vars x renames))
+                                                                   types)))
+                                   (call (top svec) ,@gss)))
+                            ,body ,isstaged)))))
+       (if (and (symbol? name) (not (eq? name 'call)))
+           `(block (method ,name)  ;; first make sure is initialized
+                   ,mdef
+                   ,name)          ;; return function
+           mdef)))))
 
 (define (const-default? x)
   (or (number? x) (string? x) (char? x) (and (pair? x) (memq (car x) '(quote inert)))))
@@ -340,6 +340,7 @@
          (body  (if (and (pair? body) (eq? (car body) 'block))
                     body
                     `(block ,body)))
+         (ftype (decl-type (car pargl)))
          ;; 1-element list of vararg argument, or empty if none
          (vararg (let ((l (if (null? pargl) '() (last pargl))))
                    (if (vararg? l)
@@ -391,15 +392,6 @@
                                    "__")))
           (flags (map (lambda (x) (gensy)) vals)))
       `(block
-        ;; call with keyword args pre-sorted - original method code goes here
-        ,(method-def-expr-
-          mangled sparams
-          `(,@vars ,@restkw ,@pargl ,@vararg)
-          `(block
-            ,@(if (null? lno) '()
-                  (list (append (car lno) (list (undot-name name)))))
-            ,@stmts) isstaged)
-
         ;; call with no keyword args
         ,(method-def-expr-
           name positional-sparams (append pargl vararg)
@@ -419,16 +411,24 @@
                                 (list `(... ,(arg-name (car vararg))))))))
           #f)
 
+        ;; call with keyword args pre-sorted - original method code goes here
+        ,(method-def-expr-
+          mangled sparams
+          `((|::| ,mangled (call (top typeof) ,mangled)) ,@vars ,@restkw ,@pargl ,@vararg)
+          `(block
+            ,@(if (null? lno) '()
+                  ;; TODO jb/functions get a better `name` for functions specified by type
+                  (list (append (car lno) (list (undot-name name)))))
+            ,@stmts) isstaged)
+
         ;; call with unsorted keyword args. this sorts and re-dispatches.
         ,(method-def-expr-
-          (list 'kw name) (filter
-                           ;; remove sparams that don't occur, to avoid printing
-                           ;; the warning twice
-                           (lambda (s)
-                             (let ((name (if (symbol? s) s (cadr s))))
-                               (expr-contains-eq name (cons 'list argl))))
-                           positional-sparams)
-          `((:: ,kw (top Array)) ,@pargl ,@vararg)
+          name
+          (filter ;; remove sparams that don't occur, to avoid printing the warning twice
+           (lambda (s) (let ((name (if (symbol? s) s (cadr s))))
+                         (expr-contains-eq name (cons 'list argl))))
+           positional-sparams)
+          `((|::| ,(gensy) (call (|.| Core 'kwftype) ,ftype)) (:: ,kw (top Array)) ,@pargl ,@vararg)
           `(block
             (line 0 || ||)
             ;; initialize keyword args to their defaults, or set a flag telling
@@ -532,11 +532,11 @@
                          ;; then add only one next argument
                          `(block
                            ,@prologue
-                           (call ,name ,@kw ,@(map arg-name passed) ,(car vals)))
+                           (call ,(arg-name (car req)) ,@kw ,@(map arg-name (cdr passed)) ,(car vals)))
                          ;; otherwise add all
                          `(block
                            ,@prologue
-                           (call ,name ,@kw ,@(map arg-name passed) ,@vals)))))
+                           (call ,(arg-name (car req)) ,@kw ,@(map arg-name (cdr passed)) ,@vals)))))
                (method-def-expr name sp (append kw passed) body #f)))
            (iota (length opt)))
     ,(method-def-expr name sparams overall-argl body isstaged))))
@@ -679,23 +679,24 @@
 (define (ctor-signature name params bounds method-params sig)
   (if (null? params)
       (if (null? method-params)
-          (cons `(call call ,@(arglist-unshift sig `(|::| ,(gensy) (curly Type ,name))))
+          (cons `(call (|::| (curly Type ,name)) ,@sig)
                 params)
-          (cons `(call (curly call ,@method-params)
-                       ,@(arglist-unshift sig `(|::| ,(gensy) (curly Type ,name))))
+          (cons `(call (curly (|::| (curly Type ,name)) ,@method-params) ,@sig)
                 params))
       (if (null? method-params)
-          (cons `(call (curly call ,@(map (lambda (p b) `(<: ,p ,b)) params bounds))
-                       ,@(arglist-unshift sig `(|::| ,(gensy) (curly Type (curly ,name ,@params)))))
+          (cons `(call (curly (|::| (curly Type (curly ,name ,@params)))
+                              ,@(map (lambda (p b) `(<: ,p ,b)) params bounds))
+                       ,@sig)
                 params)
           ;; rename parameters that conflict with user-written method parameters
           (let ((new-params (map (lambda (p) (if (memq p method-params)
                                                  (gensy)
                                                  p))
                                  params)))
-            (cons `(call (curly call ,@(map (lambda (p b) `(<: ,p ,b)) new-params bounds)
+            (cons `(call (curly (|::| (curly Type (curly ,name ,@new-params)))
+                                ,@(map (lambda (p b) `(<: ,p ,b)) new-params bounds)
                                 ,@method-params)
-                         ,@(arglist-unshift sig `(|::| ,(gensy) (curly Type (curly ,name ,@new-params)))))
+                         ,@sig)
                   new-params)))))
 
 (define (ctor-def keyword name Tname params bounds method-params sig ctor-body body)
@@ -782,7 +783,7 @@
        ;; "inner" constructors
        (scope-block
 	(block
-	 (global ,name) (global call)
+	 (global ,name)
 	 ,@(map (lambda (c)
 		  (rewrite-ctor c name params bounds field-names field-types mut))
 		defs2)))
@@ -875,7 +876,7 @@
   (cond ((or (atom? e) (quoted? e)) e)
         ((or (eq? (car e) 'lambda)
              (eq? (car e) 'function)
-         (eq? (car e) 'stagedfunction)
+             (eq? (car e) 'stagedfunction)
              (eq? (car e) '->)) e)
         ((eq? (car e) 'return)
          `(block ,@(if ret `((= ,ret true)) '())
@@ -891,26 +892,40 @@
     (case (car e)
       ((function stagedfunction)
        (let ((name (cadr e)))
-         (if (pair? name)
-             (if (eq? (car name) 'call)
-                 (expand-binding-forms
-                  (if (and (pair? (cadr name))
-                           (eq? (car (cadr name)) 'curly))
-                      (method-def-expr (cadr (cadr name))
-                                       (cddr (cadr name))
-                                       (fix-arglist (cddr name))
-                                       (caddr e) (eq? (car e) 'stagedfunction))
-                      (method-def-expr (cadr name)
-                                       '()
-                                       (fix-arglist (cddr name))
-                                       (caddr e) (eq? (car e) 'stagedfunction))))
-                 (if (eq? (car name) 'tuple)
-                     (expand-binding-forms
-                      `(-> ,name ,(caddr e)))
-                     e))
-	     (if (and (length= e 2) (symbol? name))
-		 `(method ,name)
-		 e))))
+         (cond ((and (length= e 2) (symbol? name))  `(method ,name))
+               ((not (pair? name))                  e)
+               ((eq? (car name) 'tuple)
+                (expand-binding-forms `(-> ,name ,(caddr e))))
+               ((eq? (car name) 'call)
+                (let* ((head    (cadr name))
+                       (argl    (cddr name))
+                       (has-sp  (and (pair? head) (eq? (car head) 'curly)))
+                       (name    (if has-sp (cadr head) head))
+                       (sparams (if has-sp (cddr head) '()))
+                       ;; fill in first (closure) argument
+                       (farg    (if (decl? name)
+                                    name
+                                    (if (and (symbol? name)
+                                             ;; TODO jb/functions: better handle case where function name is
+                                             ;; overridden by a user argument name
+                                             (not (any (lambda (a)
+                                                         (and (not (and (decl? a) (length= a 2)))
+                                                              (not (and (pair? a) (eq? (car a) 'parameters)))
+                                                              (eq? (arg-name a) name)))
+                                                       argl)))
+                                        `(|::| ,name (call (|.| Core 'Typeof) ,name))
+                                        `(|::|       (call (|.| Core 'Typeof) ,name)))))
+                       (argl    (fix-arglist
+                                 (if (and (not (decl? name)) (eq? (undot-name name) 'call))
+                                     argl
+                                     (arglist-unshift argl farg))))
+                       (name    (if (decl? name) #f name)))
+                  (expand-binding-forms
+                   (method-def-expr name sparams
+                                    argl
+                                    (caddr e)
+                                    (eq? (car e) 'stagedfunction)))))
+               (else e))))
 
       ((->)
        (let ((a    (cadr e))
@@ -987,9 +1002,10 @@
                    (symbol? (cadr (cadr e))))
               `(macro ,(symbol (string #\@ (cadr (cadr e))))
                  ,(cadddr
-		   (expand-binding-forms
-		    `(-> (tuple ,@(cddr (cadr e)))
-			 ,(caddr e))))))
+                   (caddr
+                    (expand-binding-forms
+                     `(-> (tuple ,@(cddr (cadr e)))
+                          ,(caddr e)))))))
              ((symbol? (cadr e))  ;; already expanded
               e)
              (else
@@ -1264,28 +1280,25 @@
                                 `((quote ,(cadr a)) ,(caddr a)))
                               keys))))
      (if (null? restkeys)
-         `(call (top kwcall) (|.| ,(current-julia-module) 'call) ,(length keys) ,@keyargs
-                ,f (call (top Array) (top Any) ,(* 2 (length keys)))
-                ,@pa)
+         `(call (call (top kwfunc) ,f) (cell1d ,@keyargs) ,f ,@pa)
          (let ((container (make-jlgensym)))
            `(block
-             (= ,container (call (top Array) (top Any) ,(* 2 (length keys))))
+             (= ,container (cell1d ,@keyargs))
              ,@(map (lambda (rk)
-                    (let* ((k (make-jlgensym))
-                           (v (make-jlgensym))
-                           (push-expr `(ccall 'jl_cell_1d_push2 Void
-                                             (tuple Any Any Any)
-                                             ,container
-                                             (|::| ,k (top Symbol))
-                                             ,v)))
-                      (if (vararg? rk)
-                          `(for (= (tuple ,k ,v) ,(cadr rk))
-                                ,push-expr)
-                          `(block (= (tuple ,k ,v) ,rk)
-                                  ,push-expr))))
-                  restkeys)
-             ,(let ((kw-call `(call (top kwcall) (|.| ,(current-julia-module) 'call) ,(length keys) ,@keyargs
-                                    ,f ,container ,@pa)))
+                      (let* ((k (make-jlgensym))
+                             (v (make-jlgensym))
+                             (push-expr `(ccall 'jl_cell_1d_push2 Void
+                                                (tuple Any Any Any)
+                                                ,container
+                                                (|::| ,k (top Symbol))
+                                                ,v)))
+                        (if (vararg? rk)
+                            `(for (= (tuple ,k ,v) ,(cadr rk))
+                                  ,push-expr)
+                            `(block (= (tuple ,k ,v) ,rk)
+                                    ,push-expr))))
+                    restkeys)
+             ,(let ((kw-call `(call (call (top kwfunc) ,f) ,container ,f ,@pa)))
                 (if (not (null? keys))
                     kw-call
                     `(if (call (top isempty) ,container)
@@ -1536,7 +1549,7 @@
                                            (tuple-wrap (cdr a) '())))
                                 (tuple-wrap (cdr a) (cons x run))))))
                     (expand-forms
-                     `(call (top _apply) (|.| ,(current-julia-module) 'call) ,f ,@(tuple-wrap argl '())))))
+                     `(call (top _apply) ,f ,@(tuple-wrap argl '())))))
 
                  ((and (eq? (cadr e) '*) (length= e 4))
                   (expand-transposed-op
@@ -2195,19 +2208,20 @@
         ((block)
          (if (length= e 2)
              (to-lff (cadr e) dest tail)
-             (let* ((g (make-jlgensym))
+             (let* ((val (last e))
+		    (g (make-jlgensym))
                     (stmts
                      (let loop ((tl (cdr e)))
                        (if (null? tl) '()
                            (if (null? (cdr tl))
-                               (cond ((or tail (eq? dest #f) (symbol-like? dest))
+                               (cond ((or tail (eq? dest #f) (symbol-like? dest) (symbol-like? val))
                                       (blk-tail (to-lff (car tl) dest tail)))
                                      (else
                                       (blk-tail (to-lff (car tl) g tail))))
                                (cons (to-blk (to-lff (car tl) #f #f))
                                      (loop (cdr tl))))))))
                (if (and (eq? dest #t) (not tail))
-                   (cons g (reverse stmts))
+                   (cons (if (symbol-like? val) val g) (reverse stmts))
                    (if (and tail (null? stmts))
                        (cons '(return (null))
                              '())
@@ -2298,8 +2312,13 @@
                (cons (if tail `(return ,ex) ex)
                      '()))))
 
-        ((module)
-         (cons e '()))
+        ((module) (cons e '()))
+	;; TODO: something needs to be done here, but things seem to depend
+	;; on the current somewhat-broken behavior in a fragile way.
+	#;((toplevel)  ;; don't move things out of toplevel blocks
+	 (let ((r (map-to-lff e dest tail)))
+	   (let ((ex `(toplevel ,@(reverse (cdr r)) ,@((if tail cdadr cdr) (car r)))))
+	     (cons (if tail `(return ,ex) ex) '()))))
 
         ((symbolicgoto symboliclabel)
          (cons (if tail '(return (null)) '(null))
@@ -2716,53 +2735,6 @@ So far only the second case can actually occur.
 (define (analyze-variables e) (analyze-vars e '() '() '()))
 
 #|
-Function redesign plan
-
-This can be done with a few intermediate stages.
-
-1. Introduce the following hacked-together closure converter to lift all
-inner functions to the top level as type and `call` definitions.
-
-2. Remove the front end's dependence on intermediate lambdas. Instead,
-all temp vars can be locals of a top level thunk, which is just a
-LambdaStaticData that can be called directly (the jl_function_t wrapper
-we used to put around it is superfluous in this case).
-
-3. Decide how to handle method defs wrapped in `let`. Possibly just make
-a closure like normal, then do
-
-@eval f(x...) = ($(ClosureType(a, b, c)))(x...)
-
-4. Now jl_function_t can be removed, along with the old implementation of
-closure conversion which is mostly in codegen.cpp. The captured vars
-field in ASTs can be removed.
-
-5. At this stage the call ABI for f(x) can effectively be
-
-if isa(f,MethodTable)
-  jl_apply_generic(f, {x}, 1)
-else
-  call(f, x)
-end
-
-5.1. Maybe introduce Function abstract type.
-
-6. Move MethodTable into TypeName. When a new generic function is created
-for f(x)=2x, internally perform
-
-immutable _ftype; end
-call(::_ftype, x) = 2x
-const f = _ftype()
-
-Definitions of `call` now need to be intercepted to modify the MethodTable
-of the TypeName of the first argument.
-
-The ABI for f(x) is now
-
-jl_call({f, x}, 2)
-
-where jl_apply_generic has been renamed jl_call.
-
 7. Figure out how to pass in static parameters in --compile=no mode.
 
 8. improve typing of closure fields; remove Box for single-assigned vars;
@@ -2783,20 +2755,15 @@ a __hidden__ submodule
 
 14. Staged functions containing closures are probably not lowered correctly
     (jl_instantiate_staged).
-
 |#
 
 (define (clear-capture-bits vinfos)
   (map (lambda (vi) (list (car vi) (cadr vi) (logand (caddr vi) (lognot 5))))
        vinfos))
 
-(define (convert-lambda lam fname tname iskw)
-  `(lambda ,(let ((args (lam:args lam)))
-	      (if iskw
-		  (list* (car args) fname (cdr args))
-		  (cons fname args)))
-     (,(cons `(,fname Any 0)
-	     (clear-capture-bits (car (lam:vinfo lam))))
+(define (convert-lambda lam fname tname)
+  `(lambda ,(lam:args lam)
+     (,(clear-capture-bits (car (lam:vinfo lam)))
       ()
       ,(caddr (lam:vinfo lam))
       ,(cadddr (lam:vinfo lam)))
@@ -2834,13 +2801,19 @@ a __hidden__ submodule
 	`(call (top apply_type) Vararg ,(cadr t))
 	t)))
 
-(define (prepend-arg-type te typ iskw)
-  (let ((typapp (caddr te)))
-    `(call (top svec)
-	   (call (top apply_type) Tuple
-		 ,@(if iskw
-		       `(,(cadddr typapp) ,typ ,@(cdr (cdddr typapp)))
-		       `(,typ ,@(cdddr typapp))))
+;; replace leading (function) argument type with `typ`
+(define (fix-function-arg-type te typ iskw namemap)
+  (let* ((typapp (caddr te))
+         (types  (pattern-replace
+		  (pattern-set
+		   (pattern-lambda (call (call (top (-/ getfield)) (-/ Core) (quote (-/ Typeof))) name)
+				   (get namemap name __)))
+		  (cdddr typapp)))
+         (newtypes
+          (if iskw
+              `(,(car types) #;(call (call (top getfield) Core 'kwftype) ,typ) ,(cadr types) ,typ ,@(cdddr types))
+              `(,typ ,@(cdr types)))))
+    `(call (top svec) (call (top apply_type) Tuple ,@newtypes)
 	   ,(cadddr te))))
 
 (define (lift-toplevel e)
@@ -2937,102 +2910,127 @@ a __hidden__ submodule
                         lam2
                         (cl-convert (cadddr lam2) 'anon lam2 (table) #f)))))))
 	  ((method)
-	   (if (length= e 2)
-	       e ;; function f end
-	       (let* ((name  (unwrap-getfield-expr (method-expr-name e)))
-		      ;; TODO: force global mode if method-expr-name returns a getfield expr
-		      (lam2  (cadddr e))
-		      (iskw  (kwarg? (cadr e)))
-		      (exists (get namemap name #f))
-		      (tname (if (or iskw exists)
-				 exists
-				 (named-gensy name)))
-		      (vis   (lam:vinfo lam2))
-		      (cvs   (delete-duplicates
-			      (apply append
-				     ;; merge captured vars from all definitions
-				     (map car (cadr vis))
-				     (map (lambda (methdef)
-					    (map car (cadr (lam:vinfo (cadddr methdef)))))
-					  (filter (lambda (ex)
-						    (and (pair? ex) (eq? (car ex) 'method)
-							 (not (eq? ex e))
-							 (length> ex 2)
-							 (eq? (unwrap-getfield-expr
-							       (method-expr-name ex))
-							      name)))
-						  (lam:body lam))))))
-		      (sig   (caddr e))
-		      (sp-inits (if (eq? (car sig) 'block)
-				    (butlast (cdr sig))
-				    '()))
-		      (sig  (if (eq? (car sig) 'block)
-				(last sig)
-				sig)))
-		 (if (and (null? cvs)
-			  (or (not lam)
-			      (and (not (assq name (car  (lam:vinfo lam))))
-				   (not (assq name (cadr (lam:vinfo lam)))))
-			      (eq? name 'call)))
-		     `(toplevel-butlast
-		       ,@sp-inits
-		       (method ,(cadr e) ,sig
-			       (lambda ,(cadr lam2)
-				 (,(clear-capture-bits (car vis))
-				  ,@(cdr vis))
-				 ,(add-box-inits-to-body
-				   lam2
-				   (cl-convert (cadddr lam2) 'anon lam2 (table) #f)))
-			       ,(last e)))
-		     `(toplevel-butlast
-		       ,@(if (or iskw exists)
-			  '()
-			  (list
-			   (begin
-			     (put! namemap name tname)
-			     (cadr
-			      (julia-expand-for-cl-convert
-			       `(thunk
-				 (lambda ()
-				   (scope-block
-				    (block (type #f ,tname
-						 (block ,@cvs)))))))))))
-		       ,@sp-inits
-		       (method ,(if iskw '(kw call) 'call)
-			       ,(prepend-arg-type sig tname iskw)
-			       ,(convert-lambda lam2 name tname iskw)
-			       ,(last e))
-		       ,(if (or iskw exists)
-			 '(null)
-			 (let ((the-closure
-                                `(call ,tname ,@(map (lambda (v)
-                                                       (let ((cv (assq v (cadr (lam:vinfo lam)))))
-                                                         (if cv
-                                                             `(call (top getfield) ,fname (inert ,v))
-                                                             v)))
-                                                     cvs))))
-			   (if (and lam (or (assq name (car  (lam:vinfo lam)))
-					    (assq name (cadr (lam:vinfo lam)))))
-			       (convert-assignment name the-closure fname lam)
-			       ;; otherwise, adding method with free variables to a global function.
-			       ;; lowered to @eval f(x, y...) = ($(clo(fv)))(x, y...)
-			       `(call
-				 (top eval)
-				 ,(current-julia-module)
-				 ,(cadr
-				   (julia-expand-for-cl-convert
-				    `(quote
-				      (= (call ,name ,@(map (lambda (arg type)
-							      (if (symbol? arg)
-								  `(|::| ,arg ,type)
-								  arg))
-							    (cadr lam2)
-							    (cdddr (caddr (caddr e)))))
-					 (call ($ ,the-closure)
-					       ,@(map (lambda (arg) (if (symbol? arg)
-									arg
-									(list '... arg)))
-						      (cadr lam2))))))))))))))))
+           (let* ((name  (unwrap-getfield-expr (method-expr-name e)))
+                  ;; TODO: force global mode if method-expr-name returns a getfield expr
+                  (exists (get namemap name #f))
+                  (tname (if exists
+                             exists
+                             (named-gensy name)))
+                  (lam2  (if (length= e 2) #f (cadddr e)))
+                  (vis   (if (length= e 2) '(() () ()) (lam:vinfo lam2)))
+                  (cvs   (delete-duplicates
+                          (apply append
+                                 ;; merge captured vars from all definitions
+                                 (map car (cadr vis))
+                                 (map (lambda (methdef)
+                                        (map car (cadr (lam:vinfo (cadddr methdef)))))
+                                      (expr-find-all
+                                       (lambda (ex)
+                                         (and (eq? (car ex) 'method)
+                                              (not (eq? ex e))
+                                              (length> ex 2)
+                                              (eq? (unwrap-getfield-expr
+                                                    (method-expr-name ex))
+                                                   name)))
+                                       (lam:body lam)
+                                       identity
+                                       (lambda (x) (and (pair? x) (not (eq? (car x) 'lambda)))))))))
+                  (typedef  ;; expression to define the type (if needed)
+                   (cadr
+                    (julia-expand-for-cl-convert
+                     `(thunk
+                       (lambda ()
+                         (scope-block
+                          (block (type #f (<: ,tname (top Function))
+                                       (block ,@cvs)))))))))
+                  (mk-closure  ;; expression to make the closure (if needed)
+                   `(call ,tname ,@(map (lambda (v)
+                                          (let ((cv (assq v (cadr (lam:vinfo lam)))))
+                                            (if cv
+                                                `(call (top getfield) ,fname (inert ,v))
+                                                v)))
+                                        cvs)))
+                  (is-top (or (not lam)
+                              (and (not (assq name (car  (lam:vinfo lam))))
+                                   (not (assq name (cadr (lam:vinfo lam)))))
+                              (eq? name 'call))))
+             (if (length= e 2)  ;; function f end
+                 (if is-top
+                     e
+                     (if exists '(null)
+                         (begin (put! namemap name tname)
+                                `(toplevel-butlast
+                                  ,typedef
+                                  ,(convert-assignment name mk-closure fname lam)))))
+                 (let* ((sig   (caddr e))
+                        (iskw ;; TODO need more robust version of this
+                         (contains (lambda (x) (eq? x 'kwftype)) sig))
+                        (_ (assert (if iskw (or is-top exists) #t)))
+                        (sp-inits (if (eq? (car sig) 'block)
+                                      (butlast (cdr sig))
+                                      '()))
+                        (sig  (if (eq? (car sig) 'block)
+                                  (last sig)
+                                  sig)))
+                   (if (and is-top (null? cvs))
+                       `(toplevel-butlast
+                         ,@sp-inits
+                         (method ,(cadr e) ,sig
+                                 (lambda ,(cadr lam2)
+                                   (,(clear-capture-bits (car vis))
+                                    ,@(cdr vis))
+                                   ,(add-box-inits-to-body
+                                     lam2
+                                     (cl-convert (cadddr lam2) 'anon lam2 (table) #f)))
+                                 ,(last e)))
+                       `(toplevel-butlast
+                         ,@(if exists
+                               '()
+                               (list
+                                (begin (and name (put! namemap name tname))
+                                       typedef)))
+                         ,@sp-inits
+                         (method #f
+                                 ,(fix-function-arg-type sig tname iskw namemap)
+                                 ,(convert-lambda lam2
+                                                  (if iskw
+                                                      (caddr (lam:args lam2))
+                                                      (car (lam:args lam2)))
+                                                  tname)
+                                 ,(last e))
+                         ,(if exists
+                              '(null)
+                              (if (and lam (or (assq name (car  (lam:vinfo lam)))
+                                               (assq name (cadr (lam:vinfo lam)))))
+                                  (convert-assignment name mk-closure fname lam)
+                                  ;; otherwise, adding method with free variables to a global function.
+                                  ;; lowered to @eval f(x, y...) = ($(clo(fv)))(x, y...)
+                                  (let* ((pass-args
+                                          (map (lambda (arg) (if (symbol? arg)
+                                                                 arg
+                                                                 (list '... arg)))
+                                               (cadr lam2))))
+				    ;; TODO: idea: allow the lambda in a method expr to be evaluated.
+				    ;; then we can use the same method header but generate a backquote
+				    ;; expr to interpolate captured things instead of creating a separate
+				    ;; function and closure. the problem with the separate closure is that
+				    ;; it doesn't delegate the correct function arg (e.g. in keyword arg defs).
+                                    `(call
+                                      (top eval)
+                                      ,(current-julia-module)
+                                      ,(cadr
+                                        (julia-expand-for-cl-convert
+                                         `(quote
+					   (block
+					   (method #f ,(caddr e)
+						   (lambda ,(cadr lam2)
+						     ,(caddr lam2)
+						     (body
+						      (return (call ($ ,mk-closure) ,@pass-args))))
+						   ,(last e)))
+                                           #;(= (call ,head ,@def-args)
+                                              (call ($ ,mk-closure)
+                                                    ,@pass-args)))))))))))))))
 	  ((lambda)  ;; should only happen inside (thunk ...)
 	   `(lambda ,(cadr e)
 	      (,(clear-capture-bits (car (lam:vinfo e)))

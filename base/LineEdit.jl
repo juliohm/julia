@@ -715,7 +715,7 @@ function normalize_keys(keymap::Dict)
     return ret
 end
 
-function add_nested_key!(keymap::Dict, key, value; override = false)
+function add_nested_key!(keymap::Dict, key, value::ANY; override = false)
     i = start(key)
     while !done(key, i)
         c, i = next(key, i)
@@ -762,7 +762,7 @@ function match_input(k::Dict, s, term=terminal(s), cs=Char[], keymap = k)
 end
 
 keymap_fcn(f::Void, s, c) = (s, p) -> return :ok
-function keymap_fcn(f, s, c)
+function keymap_fcn(f::ANY, s, c)
     return (s, p) -> begin
         r = f(s, p, c)
         if isa(r, Symbol)
@@ -858,7 +858,7 @@ function add_specialisations(dict, subdict, level)
     end
 end
 
-postprocess!(others) = nothing
+postprocess!(others::ANY) = nothing
 function postprocess!(dict::Dict)
     # needs to be done first for every branch
     if haskey(dict, '\0')
@@ -885,7 +885,7 @@ end
 # source is the keymap specified by the user (with normalized keys)
 function keymap_merge(target,source)
     ret = copy(target)
-    direct_keys = filter((k,v) -> isa(v, Union{Function, KeyAlias, Void}), source)
+    direct_keys = filter((k,v::ANY) -> isa(v, Union{Function, KeyAlias, Void}), source)
     # first direct entries
     for key in keys(direct_keys)
         add_nested_key!(ret, key, source[key]; override = true)

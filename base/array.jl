@@ -296,8 +296,8 @@ function unsafe_getindex(A::Array, ::Colon)
 end
 
 # This is redundant with the abstract fallbacks, but needed for bootstrap
-function getindex{T<:Real}(A::Array, I::Range{T})
-    return [ A[to_index(i)] for i in I ]
+function getindex{S,T<:Real}(A::Array{S}, I::Range{T})
+    return S[ A[to_index(i)] for i in I ]
 end
 
 ## Indexing: setindex! ##

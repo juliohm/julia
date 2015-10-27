@@ -17,7 +17,7 @@ const text_formats = Dict(
     :blink     => ("\e[5m", "\e[25m"),
     :negative  => ("\e[7m", "\e[27m"))
 
-function with_output_format(f, formats::Vector{Symbol}, io::IO, args...)
+function with_output_format(f::Function, formats::Vector{Symbol}, io::IO, args...)
     Base.have_color && for format in formats
         haskey(text_formats, format) &&
             print(io, text_formats[format][1])
@@ -31,10 +31,10 @@ function with_output_format(f, formats::Vector{Symbol}, io::IO, args...)
     end
 end
 
-with_output_format(f, format::Symbol, args...) =
+with_output_format(f::Function, format::Symbol, args...) =
     with_output_format(f, [format], args...)
 
-with_output_format(format, f, args...) =
+with_output_format(format, f::Function, args...) =
     with_output_format(f, format, args...)
 
 function print_with_format(format, io::IO, x)
@@ -78,7 +78,7 @@ function wrapped_lines(s::AbstractString; width = 80, i = 0)
     return lines
 end
 
-wrapped_lines(f, args...; width = 80, i = 0) =
+wrapped_lines(f::Function, args...; width = 80, i = 0) =
     wrapped_lines(sprint(f, args...), width = width, i = 0)
 
 function print_wrapped(io::IO, s...; width = 80, pre = "", i = 0)
@@ -90,7 +90,7 @@ function print_wrapped(io::IO, s...; width = 80, pre = "", i = 0)
     length(lines), length(pre) + ansi_length(lines[end])
 end
 
-print_wrapped(f, io::IO, args...; kws...) = print_wrapped(io, f, args...; kws...)
+print_wrapped(f::Function, io::IO, args...; kws...) = print_wrapped(io, f, args...; kws...)
 
 function print_centred(io::IO, s...; columns = 80, width = columns)
     lines = wrapped_lines(s..., width = width)

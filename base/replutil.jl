@@ -4,13 +4,10 @@
 writemime(io::IO, ::MIME"text/plain", x) = showlimited(io, x)
 
 function writemime(io::IO, ::MIME"text/plain", f::Function)
-    if isgeneric(f)
-        n = length(f.env)
-        m = n==1 ? "method" : "methods"
-        print(io, "$(f.env.name) (generic function with $n $m)")
-    else
-        show(io, f)
-    end
+    mt = typeof(f).name.mt
+    n = length(mt)
+    m = n==1 ? "method" : "methods"
+    print(io, "$(mt.name) (generic function with $n $m)")
 end
 
 # writemime for ranges, e.g.
@@ -167,7 +164,7 @@ function showerror(io::IO, ex::MethodError)
     else
         f = ex.f
     end
-    name = isgeneric(f) ? f.env.name : :anonymous
+    name = typeof(f).name.mt.name
     if isa(f, DataType)
         print(io, "`$(f)` has no method matching $(f)(")
     else
@@ -230,7 +227,7 @@ function showerror_nostdio(err, msg::AbstractString)
 end
 
 const UNSHOWN_METHODS = ObjectIdDict(
-    which(call, Tuple{Type, Vararg{Any}}) => true
+    which(Type, Tuple{Vararg{Any}}) => true
 )
 function show_method_candidates(io::IO, ex::MethodError)
     is_arg_types = isa(ex.args, DataType)
@@ -255,7 +252,7 @@ function show_method_candidates(io::IO, ex::MethodError)
     f === convert && push!(funcs, call)
 
     for func in funcs
-        name = isgeneric(func) ? func.env.name : :anonymous
+        name = typeof(func).name.mt.name
         for method in methods(func)
             haskey(UNSHOWN_METHODS, method) && continue
             buf = IOBuffer()
@@ -404,7 +401,7 @@ function show_backtrace(io::IO, t, set=1:typemax(Int))
     # in case its name changes in the future
     show_backtrace(io,
                     try
-                        eval_user_input.env.name
+                        typeof(eval_user_input).name.mt.name
                     catch
                         :(:) #for when client.jl is not yet defined
                     end, t, set)

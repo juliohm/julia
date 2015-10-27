@@ -33,7 +33,7 @@ function arg_decl_parts(m::Method)
     else
         tv = Any[tv...]
     end
-    li = m.func.code
+    li = m.func
     e = uncompressed_ast(li)
     argnames = e.args[1]
     s = symbol("?")
@@ -42,7 +42,7 @@ function arg_decl_parts(m::Method)
 end
 
 function show(io::IO, m::Method)
-    print(io, m.func.code.name)
+    print(io, m.func.name)
     tv, decls, file, line = arg_decl_parts(m)
     if !isempty(tv)
         show_delim_array(io, tv, '{', ',', '}', false)
@@ -94,10 +94,10 @@ end
 fileurl(file) = let f = find_source_file(file); f === nothing ? "" : "file://"*f; end
 
 function url(m::Method)
-    M = m.func.code.module
-    (m.func.code.file == :null || m.func.code.file == :string) && return ""
-    file = string(m.func.code.file)
-    line = m.func.code.line
+    M = m.func.module
+    (m.func.file == :null || m.func.file == :string) && return ""
+    file = string(m.func.file)
+    line = m.func.line
     line <= 0 || ismatch(r"In\[[0-9]+\]", file) && return ""
     if inbase(M)
         if isempty(Base.GIT_VERSION_INFO.commit)
@@ -129,7 +129,7 @@ function url(m::Method)
 end
 
 function writemime(io::IO, ::MIME"text/html", m::Method)
-    print(io, m.func.code.name)
+    print(io, m.func.name)
     tv, decls, file, line = arg_decl_parts(m)
     if !isempty(tv)
         print(io,"<i>")

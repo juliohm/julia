@@ -173,9 +173,9 @@
        (symbol-like? (cadr e))))
 
 (define (undot-name e)
-  (if (symbol? e)
-      e
-      (cadr (caddr e))))
+  (if (and (pair? e) (eq? (car e) '|.|))
+      (cadr (caddr e))
+      e))
 
 (define (dotop? o) (and (symbol? o) (eqv? (string.char (string o) 0) #\.)))
 

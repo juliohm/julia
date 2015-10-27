@@ -41,6 +41,20 @@ STATIC_INLINE jl_value_t *newstruct(jl_datatype_t *type)
     return jv;
 }
 
+void jl_generate_fptr(jl_lambda_info_t *li);
+
+// invoke (compiling if necessary) the jlcall function pointer for a method
+STATIC_INLINE jl_value_t *jl_call_method_internal(jl_lambda_info_t *meth, jl_value_t **args, uint32_t nargs)
+{
+    if (meth->fptr == NULL) {
+        jl_compile_linfo(meth);
+        jl_generate_fptr(meth);
+    }
+    return meth->fptr(args[0], &args[1], nargs-1);
+}
+
+jl_tupletype_t *jl_argtype_with_function(jl_function_t *f, jl_tupletype_t *types);
+
 #define GC_MAX_SZCLASS (2032-sizeof(void*))
 // MSVC miscalculates sizeof(jl_taggedvalue_t) because
 // empty structs are a GNU extension
@@ -71,15 +85,13 @@ DLLEXPORT void jl_typeassert(jl_value_t *x, jl_value_t *t);
 #define JL_CALLABLE(name) \
     DLLEXPORT jl_value_t *name(jl_value_t *F, jl_value_t **args, uint32_t nargs)
 
-JL_CALLABLE(jl_trampoline);
-JL_CALLABLE(jl_apply_generic);
 JL_CALLABLE(jl_unprotect_stack);
-JL_CALLABLE(jl_f_no_function);
 JL_CALLABLE(jl_f_tuple);
 JL_CALLABLE(jl_f_intrinsic_call);
 extern jl_function_t *jl_unprotect_stack_func;
-extern jl_function_t *jl_bottom_func;
 void jl_install_default_signal_handlers(void);
+
+jl_fptr_t jl_get_builtin_fptr(jl_value_t *b);
 
 extern jl_datatype_t *jl_box_type;
 extern jl_value_t *jl_box_any_type;
@@ -109,10 +121,10 @@ jl_value_t *jl_type_match_morespecific(jl_value_t *a, jl_value_t *b);
 int jl_types_equal_generic(jl_value_t *a, jl_value_t *b, int useenv);
 jl_datatype_t *jl_inst_concrete_tupletype_v(jl_value_t **p, size_t np);
 jl_datatype_t *jl_inst_concrete_tupletype(jl_svec_t *p);
-jl_function_t *jl_method_cache_insert(jl_methtable_t *mt, jl_tupletype_t *type,
-                                      jl_function_t *method);
+jl_lambda_info_t *jl_method_cache_insert(jl_methtable_t *mt, jl_tupletype_t *type,
+                                         jl_lambda_info_t *method);
 jl_methlist_t *jl_method_table_insert(jl_methtable_t *mt, jl_tupletype_t *type,
-                                      jl_function_t *method, jl_svec_t *tvars,
+                                      jl_lambda_info_t *method, jl_svec_t *tvars,
                                       int8_t isstaged);
 
 void jl_set_datatype_super(jl_datatype_t *tt, jl_value_t *super);
@@ -161,10 +173,11 @@ void jl_dump_objfile(char *fname, int jit_model, const char *sysimg_data, size_t
 int32_t jl_get_llvm_gv(jl_value_t *p);
 void jl_idtable_rehash(jl_array_t **pa, size_t newsz);
 
+jl_methtable_t *jl_new_method_table(jl_sym_t *name, jl_module_t *module);
 jl_lambda_info_t *jl_add_static_parameters(jl_lambda_info_t *l, jl_svec_t *sp, jl_tupletype_t *types);
-jl_function_t *jl_get_specialization(jl_function_t *f, jl_tupletype_t *types);
+jl_lambda_info_t *jl_get_specialization1(jl_tupletype_t *types);
+jl_lambda_info_t *jl_get_specialization(jl_function_t *f, jl_tupletype_t *types);
 jl_function_t *jl_module_get_initializer(jl_module_t *m);
-void jl_generate_fptr(jl_function_t *f);
 void jl_fptr_to_llvm(void *fptr, jl_lambda_info_t *lam, int specsig);
 jl_tupletype_t *arg_type_tuple(jl_value_t **args, size_t nargs);
 
