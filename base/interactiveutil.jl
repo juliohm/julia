@@ -498,7 +498,11 @@ function summarysize(obj::DataType, seen, excl)
     return size
 end
 
-summarysize(obj::TypeName, seen, excl) = Core.sizeof(obj)
+function summarysize(obj::TypeName, seen, excl)
+    key = pointer_from_objref(obj)
+    haskey(seen, key) ? (return 0) : (seen[key] = true)
+    return Core.sizeof(obj) + summarysize(obj.mt, seen, excl)
+end
 
 summarysize(obj::ANY, seen, excl) = _summarysize(obj, seen, excl)
 # define the general case separately to make sure it is not specialized for every type
@@ -558,6 +562,14 @@ function summarysize(obj::Module, seen, excl)
             value = getfield(obj, binding)
             if !isa(value, Module) || module_parent(value) === obj
                 size += summarysize(value, seen, excl)::Int
+                vt = isa(value,DataType) ? value : typeof(value)
+                if vt.name.module === obj
+                    if vt !== value
+                        size += summarysize(vt, seen, excl)::Int
+                    end
+                    # charge a TypeName to its module
+                    size += summarysize(vt.name, seen, excl)::Int
+                end
             end
         end
     end
@@ -597,7 +609,9 @@ function summarysize(m::Method, seen, excl)
     while true
         haskey(seen, m) ? (return size) : (seen[m] = true)
         size += Core.sizeof(m)
-        size += summarysize(m.func, seen, excl)::Int
+        if isdefined(m, :func)
+            size += summarysize(m.func, seen, excl)::Int
+        end
         size += summarysize(m.sig, seen, excl)::Int
         size += summarysize(m.tvars, seen, excl)::Int
         size += summarysize(m.invokes, seen, excl)::Int

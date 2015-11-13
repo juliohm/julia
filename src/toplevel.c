@@ -49,7 +49,7 @@ jl_module_t *jl_new_main_module(void)
         jl_error("cannot call workspace() in incremental compile mode");
 
     // switch to a new top-level module
-    if (jl_current_module != jl_main_module && jl_current_module != NULL)
+    if (jl_current_module != jl_main_module && jl_current_module != NULL && jl_main_module != NULL)
         jl_error("Main can only be replaced from the top level");
 
     jl_module_t *old_main = jl_main_module;
@@ -682,8 +682,34 @@ static int type_contains(jl_value_t *ty, jl_value_t *x)
 
 void print_func_loc(JL_STREAM *s, jl_lambda_info_t *li);
 
+void jl_check_static_parameter_conflicts(jl_lambda_info_t *li, jl_svec_t *t, jl_sym_t *fname)
+{
+    jl_array_t *vinfo;
+    size_t nvars;
+
+    if (li->ast && jl_is_expr(li->ast)) {
+        vinfo = jl_lam_vinfo((jl_expr_t*)li->ast);
+        nvars = jl_array_len(vinfo);
+        for(size_t i=0; i < jl_svec_len(t); i++) {
+            for(size_t j=0; j < nvars; j++) {
+                jl_value_t *tv = jl_svecref(t,i);
+                if (jl_is_typevar(tv)) {
+                    if ((jl_sym_t*)jl_cellref((jl_array_t*)jl_cellref(vinfo,j),0) ==
+                        ((jl_tvar_t*)tv)->name) {
+                        jl_printf(JL_STDERR,
+                                  "WARNING: local variable %s conflicts with a static parameter in %s",
+                                  jl_symbol_name(((jl_tvar_t*)tv)->name),
+                                  jl_symbol_name(fname));
+                        print_func_loc(JL_STDERR, li);
+                        jl_printf(JL_STDERR, ".\n");
+                    }
+                }
+            }
+        }
+    }
+}
+
 // empty generic function def
-// TODO: maybe have jl_method_def call this
 DLLEXPORT jl_value_t *jl_generic_function_def(jl_sym_t *name, jl_value_t **bp, jl_value_t *bp_owner,
                                               jl_binding_t *bnd)
 {
@@ -715,6 +741,17 @@ DLLEXPORT void jl_method_def(jl_svec_t *argdata, jl_lambda_info_t *f, jl_value_t
     jl_svec_t *tvars = (jl_svec_t*)jl_svecref(argdata,1);
     jl_methtable_t *mt;
     jl_sym_t *name;
+    JL_GC_PUSH1(&f);
+
+    if (!jl_is_lambda_info(f)) {
+        jl_value_t *jl_macroexpand(jl_value_t *expr);
+        assert(jl_is_expr(f) && ((jl_expr_t*)f)->head == lambda_sym);
+        // TODO jb/functions
+        // calling macroexpand is a hack to make sure the lambda info lists are
+        // correctly formatted by sending through julia_to_scm then scm_to_julia.
+        f = (jl_lambda_info_t*)jl_macroexpand((jl_value_t*)f);
+    }
+
     assert(jl_is_lambda_info(f));
     assert(jl_is_tuple_type(argtypes));
     assert(jl_is_svec(tvars));
@@ -727,6 +764,8 @@ DLLEXPORT void jl_method_def(jl_svec_t *argdata, jl_lambda_info_t *f, jl_value_t
         jl_error("cannot add methods to an abstract type");
     mt = ((jl_datatype_t*)ftype)->name->mt;
     name = mt->name;
+
+    jl_check_static_parameter_conflicts(f, tvars, name);
 
     // TODO
     size_t na = jl_nparams(argtypes);
@@ -759,33 +798,7 @@ DLLEXPORT void jl_method_def(jl_svec_t *argdata, jl_lambda_info_t *f, jl_value_t
         f->ast = jl_compress_ast(f, f->ast);
         jl_gc_wb(f, f->ast);
     }
-}
-
-void jl_check_static_parameter_conflicts(jl_lambda_info_t *li, jl_svec_t *t, jl_sym_t *fname)
-{
-    jl_array_t *vinfo;
-    size_t nvars;
-
-    if (li->ast && jl_is_expr(li->ast)) {
-        vinfo = jl_lam_vinfo((jl_expr_t*)li->ast);
-        nvars = jl_array_len(vinfo);
-        for(size_t i=0; i < jl_svec_len(t); i++) {
-            for(size_t j=0; j < nvars; j++) {
-                jl_value_t *tv = jl_svecref(t,i);
-                if (jl_is_typevar(tv)) {
-                    if ((jl_sym_t*)jl_cellref((jl_array_t*)jl_cellref(vinfo,j),0) ==
-                        ((jl_tvar_t*)tv)->name) {
-                        jl_printf(JL_STDERR,
-                                  "WARNING: local variable %s conflicts with a static parameter in %s",
-                                  jl_symbol_name(((jl_tvar_t*)tv)->name),
-                                  jl_symbol_name(fname));
-                        print_func_loc(JL_STDERR, li);
-                        jl_printf(JL_STDERR, ".\n");
-                    }
-                }
-            }
-        }
-    }
+    JL_GC_POP();
 }
 
 #ifdef __cplusplus

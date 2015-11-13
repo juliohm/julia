@@ -486,7 +486,6 @@ static Function *jltuple_func;
 static Function *jlnsvec_func;
 static Function *jlapplygeneric_func;
 static Function *jlgetfield_func;
-static Function *jlbox_func;
 static Function *jlmethod_func;
 static Function *jlgenericfunction_func;
 static Function *jlenter_func;
@@ -617,7 +616,6 @@ struct jl_varinfo_t {
     bool isSA;
     bool isVolatile;
     bool isArgument;
-    bool isBox;
     bool hasGCRoot;
     bool escapes;
     bool usedUndef;
@@ -630,7 +628,7 @@ struct jl_varinfo_t {
                      dinfo(DIVariable()),
 #endif
                      isAssigned(true), isSA(false),
-                     isVolatile(false), isArgument(false), isBox(false), hasGCRoot(false),
+                     isVolatile(false), isArgument(false), hasGCRoot(false),
                      escapes(true), usedUndef(false), used(false)
     {
     }
@@ -3112,10 +3110,6 @@ static jl_cgval_t emit_var(jl_sym_t *sym, jl_codectx_t *ctx, bool isboxed)
     jl_varinfo_t &vi = ctx->vars[sym];
     if (vi.memloc) {
         Value *bp = vi.memloc;
-        if (vi.isBox) {
-            Instruction *load = builder.CreateLoad(bp);
-            bp = builder.CreatePointerCast(load, T_ppjlvalue);
-        }
         if (vi.isArgument ||  // arguments are always defined
             (!vi.isAssigned && !vi.usedUndef)) {
             // if no undef usage was found by inference, and it's either not assigned or not in env it must be always defined
@@ -3244,14 +3238,7 @@ static void emit_assignment(jl_value_t *l, jl_value_t *r, jl_codectx_t *ctx)
                 }
                 return;
             }
-            if (vi.isBox) {
-                bp = builder.CreatePointerCast(builder.CreateLoad(bp), T_ppjlvalue);
-            }
             builder.CreateStore(rval, bp, vi.isVolatile);
-            if (vi.isBox) {
-                // bp is a jl_box_t*
-                emit_write_barrier(ctx, bp, rval);
-            }
         }
         else {
             // SSA variable w/o gcroot, just track the value info
@@ -3384,10 +3371,7 @@ static jl_cgval_t emit_expr(jl_value_t *expr, jl_codectx_t *ctx, bool isboxed, b
         Value *lv = vi.memloc;
         if (lv != NULL) {
             // create a new uninitialized variable
-            if (vi.isBox) {
-                builder.CreateStore(builder.CreateCall(prepare_call(jlbox_func), V_null), lv);
-            }
-            else if (vi.usedUndef) {
+            if (vi.usedUndef) {
                 builder.CreateStore(V_null, lv);
             }
         }
@@ -3479,11 +3463,6 @@ static jl_cgval_t emit_expr(jl_value_t *expr, jl_codectx_t *ctx, bool isboxed, b
             else {
                 jl_varinfo_t &vi = ctx->vars[(jl_sym_t*)mn];
                 bp = vi.memloc;
-                if (vi.isBox) {
-                    // bp is a jl_box_t*
-                    bp = builder.CreatePointerCast(builder.CreateLoad(bp), T_ppjlvalue);
-                    bp_owner = builder.CreateBitCast(bp, T_pjlvalue);
-                }
             }
             Value *mdargs[4] = { name, bp, bp_owner, literal_pointer_val(bnd) };
             return mark_julia_type(
@@ -4808,29 +4787,13 @@ static Function *emit_function(jl_lambda_info_t *lam)
             }
             else {
                 Value *argp = boxed(theArg, &ctx);
-                if (vi.isBox) {
-                    if (!theArg.isboxed) {
-                        builder.CreateStore(argp, lv); // temporarily root
-                    }
-                    builder.CreateStore(builder.CreateCall(prepare_call(jlbox_func), argp), lv);
-                }
-                else {
-                    builder.CreateStore(argp, lv);
-                }
+                builder.CreateStore(argp, lv);
             }
             // get arrayvar data if applicable
             if (arrayvars.find(s) != arrayvars.end()) {
                 jl_arrayvar_t av = arrayvars[s];
                 assign_arrayvar(av, theArg);
             }
-        }
-        else if (vi.isBox) {
-            // boxed ghost value -- TODO: kill this
-            Value *lv = vi.memloc;
-            assert(lv);
-            jl_value_t *inst = static_void_instance(vi.value.typ);
-            assert(inst);
-            builder.CreateStore(builder.CreateCall(prepare_call(jlbox_func), literal_pointer_val(inst)), lv);
         }
         else {
             assert(vi.memloc == NULL);
@@ -4863,10 +4826,7 @@ static Function *emit_function(jl_lambda_info_t *lam)
                                         builder.CreateSub(argCount,
                                                           ConstantInt::get(T_int32,nreq-1)));
 #endif
-                if (vi.isBox)
-                    builder.CreateStore(builder.CreateCall(prepare_call(jlbox_func), restTuple), lv);
-                else
-                    builder.CreateStore(restTuple, lv);
+                builder.CreateStore(restTuple, lv);
             }
             else {
                 // TODO: Perhaps allow this in the future, but for now since varargs
@@ -5548,12 +5508,6 @@ static void init_julia_llvm_env(Module *m)
 
     std::vector<Type*> args3(0);
     args3.push_back(T_pjlvalue);
-    jlbox_func =
-        Function::Create(FunctionType::get(T_pjlvalue, args3, false),
-                         Function::ExternalLinkage,
-                         "jl_new_box", m);
-    add_named_global(jlbox_func, (void*)&jl_new_box);
-
     jltopeval_func =
         Function::Create(FunctionType::get(T_pjlvalue, args3, false),
                          Function::ExternalLinkage,

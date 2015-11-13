@@ -2184,10 +2184,10 @@ call_lambda1() = (()->x)(1)
 call_lambda2() = ((x)->x)()
 call_lambda3() = ((x)->x)(1,2)
 call_lambda4() = ((x,y...)->x)()
-@test (try call_lambda1(); false; catch e; (e::ErrorException).msg; end) == "wrong number of arguments"
-@test (try call_lambda2(); false; catch e; (e::ErrorException).msg; end) == "wrong number of arguments"
-@test (try call_lambda3(); false; catch e; (e::ErrorException).msg; end) == "wrong number of arguments"
-@test (try call_lambda4(); false; catch e; (e::ErrorException).msg; end) == "too few arguments"
+@test_throws MethodError call_lambda1()
+@test_throws MethodError call_lambda2()
+@test_throws MethodError call_lambda3()
+@test_throws MethodError call_lambda4()
 call_lambda5() = ((x...)->x)()
 call_lambda6() = ((x...)->x)(1)
 call_lambda7() = ((x...)->x)(1,2)
@@ -2373,13 +2373,13 @@ type newtype10373
 end
 let f
     for f in (f10373,g10373)
-        f(x::newtype10373) = println("$f")
+        (::typeof(f))(x::newtype10373) = println("$f")
     end
 end
-@test f10373.env.defs.func.code.name == :f10373
-@test f10373.env.defs.next.func.code.name == :f10373
-@test g10373.env.defs.func.code.name == :g10373
-@test g10373.env.defs.next.func.code.name == :g10373
+@test methods(f10373).defs.func.name == :f10373
+@test methods(f10373).defs.next.func.name == :f10373
+@test methods(g10373).defs.func.name == :g10373
+@test methods(g10373).defs.next.func.name == :g10373
 
 # issue #7221
 f7221{T<:Number}(::T) = 1
@@ -3093,9 +3093,9 @@ end
 
 g11858(x::Float64) = x
 f11858(a) = for Baz in a
-    Baz(x) = Baz(float(x))
+    (f::Baz)(x) = f(float(x))
 end
-f11858(Any[Foo11858, Bar11858, g11858])
+f11858(Any[Type{Foo11858}, Type{Bar11858}, typeof(g11858)])
 
 @test g11858(1) == 1.0
 @test Foo11858(1).x == 1.0
@@ -3172,9 +3172,9 @@ failure12003(dt=DATE12003) = Dates.year(dt)
 @test isa(failure12003(), Integer)
 
 # issue #12023 Test error checking in bitstype
-@test_throws ErrorException bitstype 0 SPJa12023
-@test_throws ErrorException bitstype 4294967312 SPJb12023
-@test_throws ErrorException bitstype -4294967280 SPJc12023
+@test_throws ErrorException (@eval bitstype 0 SPJa12023)
+@test_throws ErrorException (@eval bitstype 4294967312 SPJb12023)
+@test_throws ErrorException (@eval bitstype -4294967280 SPJc12023)
 
 # issue #12089
 type A12089{K, N}
@@ -3321,21 +3321,6 @@ end
 @test @inferred(MyColors.myeltype(MyColors.RGB{Float32})) == Float32
 @test @inferred(MyColors.myeltype(MyColors.RGB)) == Any
 
-# issue #12612 (handle the case when `call` is not defined)
-Main.eval(:(type Foo12612 end))
-
-baremodule A12612
-import Main: Foo12612
-f1() = Foo12612()
-f2() = Main.Foo12612()
-end
-
-## Don't panic in type inference if call is not defined
-code_typed(A12612.f1, Tuple{})
-code_typed(A12612.f2, Tuple{})
-@test_throws ErrorException A12612.f1()
-@test_throws ErrorException A12612.f2()
-
 # issue #12569
 @test_throws ArgumentError symbol("x"^10_000_000)
 @test_throws ArgumentError gensym("x"^10_000_000)
@@ -3343,7 +3328,7 @@ code_typed(A12612.f2, Tuple{})
 @test split(string(gensym("abc")),'#')[3] == "abc"
 
 # meta nodes for optional positional arguments
-@test Base.uncompressed_ast(expand(:(@inline f(p::Int=2) = 3)).args[1].args[3]).args[3].args[1].args[1] === :inline
+@test Base.uncompressed_ast(expand(:(@inline f(p::Int=2) = 3)).args[2].args[3]).args[3].args[1].args[1] === :inline
 
 # issue #12826
 f12826{I<:Integer}(v::Vector{I}) = v[1]

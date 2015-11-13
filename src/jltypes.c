@@ -3242,6 +3242,7 @@ void jl_init_types(void)
     jl_methtable_type->uid = jl_assign_type_uid();
     jl_methtable_type->instance = NULL;
     jl_methtable_type->struct_decl = NULL;
+    jl_methtable_type->ditype = NULL;
     jl_methtable_type->abstract = 0;
     jl_methtable_type->pointerfree = 0;
     jl_methtable_type->mutabl = 1;
@@ -3355,7 +3356,7 @@ void jl_init_types(void)
                         jl_svec(7, jl_type_type, jl_bool_type, jl_bool_type,
                                 jl_any_type, jl_any_type,
                                 jl_any_type, jl_any_type),
-                        0, 1, 7);
+                        0, 1, 4);
 
     jl_function_type = jl_new_abstracttype((jl_value_t*)jl_symbol("Function"), jl_any_type, jl_emptysvec);
     jl_builtin_type  = jl_new_abstracttype((jl_value_t*)jl_symbol("Builtin"), jl_function_type, jl_emptysvec);

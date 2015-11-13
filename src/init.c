@@ -565,6 +565,7 @@ void _julia_init(JL_IMAGE_SEARCH rel)
         jl_core_module = jl_new_module(jl_symbol("Core"));
         jl_type_type->name->mt->module = jl_core_module;
         jl_top_module = jl_core_module;
+        jl_current_module = jl_core_module;
         jl_init_intrinsic_functions();
         jl_init_primitives();
         jl_get_builtins();

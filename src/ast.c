@@ -308,7 +308,7 @@ static jl_value_t *scm_to_julia_(value_t e, int eo)
             value_t largs = car_(e);
             jl_cellset(ex->args, 0, full_list(largs,eo));
             e = cdr_(e);
-            
+
             value_t ee = car_(e);
             jl_array_t *vinf = jl_alloc_cell_1d(4);
             jl_cellset(vinf, 0, full_list_of_lists(car_(ee),eo));
@@ -323,7 +323,7 @@ static jl_value_t *scm_to_julia_(value_t e, int eo)
             assert(!iscons(cdr_(ee)));
             jl_cellset(ex->args, 1, vinf);
             e = cdr_(e);
-            
+
             for(i=2; i < n; i++) {
                 assert(iscons(e));
                 jl_cellset(ex->args, i, scm_to_julia_(car_(e), eo));
