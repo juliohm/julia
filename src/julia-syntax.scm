@@ -902,10 +902,15 @@
                        (has-sp  (and (pair? head) (eq? (car head) 'curly)))
                        (name    (if has-sp (cadr head) head))
                        (sparams (if has-sp (cddr head) '()))
+                       (isstaged (eq? (car e) 'stagedfunction))
                        ;; fill in first (closure) argument
                        (farg    (if (decl? name)
                                     name
                                     (if (and (symbol? name)
+                                             ;; don't use function name for argument in staged
+                                             ;; functions, since we wouldn't want it to refer to
+                                             ;; the function's type.
+                                             (not isstaged)
                                              ;; TODO jb/functions: better handle case where function name is
                                              ;; overridden by a user argument name
                                              (not (any (lambda (a)
@@ -924,7 +929,7 @@
                    (method-def-expr name sparams
                                     argl
                                     (caddr e)
-                                    (eq? (car e) 'stagedfunction)))))
+                                    isstaged))))
                (else e))))
 
       ((->)
@@ -983,14 +988,16 @@
                                     (= ,vname ,(caddar binds))
                                     ,blk))))))
                     ((and (pair? (cadar binds))
+                          (symbol? (cadr (cadar binds)))
                           (eq? (caadar binds) 'call))
                      ;; f()=c
-                     (let ((asgn (cadr (julia-expand0 (car binds)))))
+                     (let ((asgn (butlast (julia-expand0 (car binds))))
+                           (name (cadr (cadar binds))))
                        (loop (cdr binds)
                              `(scope-block
                                (block
-                                (local ,(cadr asgn))
-                                (newvar ,(cadr asgn))
+                                (local ,name)
+                                (newvar ,name)
                                 ,asgn
                                 ,blk)))))
                     (else (error "invalid let syntax"))))

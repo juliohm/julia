@@ -223,7 +223,7 @@ code_native(f::ANY, types::ANY=Tuple) = code_native(STDOUT, f, types)
 
 # give a decent error message if we try to instantiate a staged function on non-leaf types
 function func_for_method_checked(m, types)
-    linfo = Core.Inference.func_for_method(m[3],types,m[2])
+    linfo = Core.Inference.func_for_method(m[3],m[1],m[2])
     if linfo === Core.Inference.NF
         error("cannot call @generated function `", m[3], "` ",
               "with abstract argument types: ", types)
