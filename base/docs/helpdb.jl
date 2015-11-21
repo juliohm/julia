@@ -4936,13 +4936,6 @@ Return an iterator over all keys in a collection. `collect(keys(d))` returns an 
 keys
 
 doc"""
-    repeat(A, inner = Int[], outer = Int[])
-
-Construct an array by repeating the entries of `A`. The i-th element of `inner` specifies the number of times that the individual entries of the i-th dimension of `A` should be repeated. The i-th element of `outer` specifies the number of times that a slice along the i-th dimension of `A` should be repeated.
-"""
-repeat
-
-doc"""
     scale(A, b)
     scale(b, A)
 

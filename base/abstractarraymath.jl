@@ -200,30 +200,66 @@ function repmat(a::AbstractVector, m::Int)
 end
 
 # Generalized repmat
-function repeat{T}(A::Array{T};
-                   inner::Array{Int} = ones(Int, ndims(A)),
-                   outer::Array{Int} = ones(Int, ndims(A)))
-    ndims_in = ndims(A)
-    length_inner = length(inner)
-    length_outer = length(outer)
+"""
+    repeat(a::AbstractArray, outer[, inner])
+
+Construct an array by repeating the entries of `a`. The i-th element of `outer`
+specifies the number of times that a slice along the i-th dimension of `a`
+should be repeated. The i-th element of `inner` specifies the number of times
+that the individual entries of the i-th dimension of `a` should be repeated.
+Pass an empty tuple as `outer` (or any other empty collection, which is equivalent
+to a tuple of ones of length `ndims(a)`) to use only inner repetitions.
+
+Examples:
+```
+    julia> repeat(1:2, 2)
+    4-element Array{Int64,1}:
+     1
+     2
+     1
+     2
+
+    julia> repeat(1:2, (), 2)
+    4-element Array{Int64,1}:
+     1
+     1
+     2
+     2
+
+    julia> repeat([1 2; 3 4], (1, 2), (2, 1))
+    4x4 Array{Int64,2}:
+     1  2  1  2
+     1  2  1  2
+     3  4  3  4
+     3  4  3  4
+```
+"""
+function repeat(a::AbstractArray, outer, inner = ())
+    ndims_in = ndims(a)
+    length_inner = isempty(inner) ? ndims(a) : length(inner)
+    length_outer = isempty(outer) ? ndims(a) : length(outer)
+
+    length_inner >= ndims_in || throw(ArgumentError("only $(length(inner)) repetitions specified, for input array with $(ndims(a)) dimensions"))
+    length_outer >= ndims_in || throw(ArgumentError("only $(length(outer)) repetitions specified for input array with $(ndims(a)) dimensions"))
+
     ndims_out = max(ndims_in, length_inner, length_outer)
 
-    if length_inner < ndims_in || length_outer < ndims_in
-        throw(ArgumentError("inner/outer repetitions must be set for all input dimensions"))
-    end
+    inner_a = isempty(inner) ?
+              ones(Int,ndims_in) :
+              vcat(collect(inner), ones(Int,ndims_out-length_inner))
+    outer_a = isempty(outer) ?
+              ones(Int,ndims_in) :
+              vcat(collect(outer), ones(Int,ndims_out-length_outer))
 
-    inner = vcat(inner, ones(Int,ndims_out-length_inner))
-    outer = vcat(outer, ones(Int,ndims_out-length_outer))
+    size_in = size(a)
+    size_out = ntuple(i->inner_a[i]*size(a,i)*outer_a[i],ndims_out)::Dims
+    inner_size_out = ntuple(i->inner_a[i]*size(a,i),ndims_out)::Dims
 
-    size_in = size(A)
-    size_out = ntuple(i->inner[i]*size(A,i)*outer[i],ndims_out)::Dims
-    inner_size_out = ntuple(i->inner[i]*size(A,i),ndims_out)::Dims
-
-    indices_in = Array(Int, ndims_in)
-    indices_out = Array(Int, ndims_out)
+    indices_in = Vector{Int}(ndims_in)
+    indices_out = Vector{Int}(ndims_out)
 
     length_out = prod(size_out)
-    R = Array(T, size_out)
+    r = similar(a, size_out)
 
     for index_out in 1:length_out
         ind2sub!(indices_out, size_out, index_out)
@@ -231,13 +267,13 @@ function repeat{T}(A::Array{T};
             # "Project" outer repetitions into inner repetitions
             indices_in[t] = mod1(indices_out[t], inner_size_out[t])
             # Find inner repetitions using flooring division
-            if inner[t] != 1
-                indices_in[t] = fld1(indices_in[t], inner[t])
+            if inner_a[t] != 1
+                indices_in[t] = fld1(indices_in[t], inner_a[t])
             end
         end
         index_in = sub2ind(size_in, indices_in...)
-        R[index_out] = A[index_in]
+        r[index_out] = a[index_in]
     end
 
-    return R
+    return r
 end
