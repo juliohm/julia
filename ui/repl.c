@@ -34,6 +34,8 @@
 extern "C" {
 #endif
 
+JL_DEF_GET_PTLS_STATES()
+
 static int lisp_prompt = 0;
 static int codecov  = JL_LOG_NONE;
 static int malloclog= JL_LOG_NONE;

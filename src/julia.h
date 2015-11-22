@@ -57,12 +57,34 @@ extern "C" {
 
 // threading ------------------------------------------------------------------
 
-// WARNING: Threading support is incomplete and experimental (and only works with llvm-svn)
-// Nonetheless, we define JL_THREAD and use it to give advanced notice to maintainers
-// of what eventual threading support will change.
+// WARNING: Threading support is incomplete and experimental
+// Nonetheless, we define JL_THREAD and use it to give advanced notice to
+// maintainers of what eventual threading support will change.
 
 // JULIA_ENABLE_THREADING is switched on in Make.inc if JULIA_THREADS is
 // set (in Make.user)
+
+#ifdef JULIA_ENABLE_THREADING
+#  if !defined(_COMPILER_MICROSOFT_)
+// Definition for compiling Julia on platforms with GCC __thread.
+#    define JL_DEF_TLS_STATES_VAR                       \
+    static __thread jl_tls_states_t jl_tls_states
+#  else
+// Definition for compiling Julia on Windows
+#    define JL_DEF_TLS_STATES_VAR                               \
+    static __declspec(thread) jl_tls_states_t jl_tls_states
+#  endif
+#else
+#    define JL_DEF_TLS_STATES_VAR               \
+    DLLEXPORT jl_tls_states_t jl_tls_states
+#endif
+#define JL_DEF_GET_PTLS_STATES()                                        \
+    JL_DEF_TLS_STATES_VAR;                                              \
+    DLLEXPORT JL_CONST_FUNC jl_tls_states_t *(jl_get_ptls_states)(void) \
+    {                                                                   \
+        return &jl_tls_states;                                          \
+    }
+
 
 DLLEXPORT int16_t jl_threadid(void);
 DLLEXPORT void *jl_threadgroup(void);
