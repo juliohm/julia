@@ -34,7 +34,12 @@
 extern "C" {
 #endif
 
+#ifdef __linux__
+// Define the TLS variables in the executable to have fast static tls access
+// this is currently only enabled on linux since it gives a undefined symbol
+// error on other platforms
 JL_DEF_GET_PTLS_STATES()
+#endif
 
 static int lisp_prompt = 0;
 static int codecov  = JL_LOG_NONE;

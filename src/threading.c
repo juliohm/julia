@@ -42,6 +42,10 @@ DLLEXPORT int jl_max_threads;   // # threads possible
 jl_thread_task_state_t *jl_all_task_states;
 jl_gcframe_t ***jl_all_pgcstacks;
 
+#ifndef __linux__
+JL_DEF_GET_PTLS_STATES()
+#endif
+
 // return calling thread's ID
 DLLEXPORT int16_t jl_threadid(void) { return ti_tid; }
 
